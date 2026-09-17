@@ -3,7 +3,8 @@
  * Intentionally tiny: no LoRa/MQTT/ESP-NOW/status tasks — those caused
  * boot loops on USB-powered boards when WiFi started.
  *
- * SSID LoRa-1 / 10941090 → UDP 192.168.1.1:9500
+ * SSID LoRa-1 / 10941090 → UDP 109.248.247.168:9500 (this lab server).
+ * Note: 192.168.1.1 on the PC is Ethernet 2 (base LAN), not reachable from WiFi.
  */
 #include <ctype.h>
 #include <math.h>
@@ -34,7 +35,7 @@ static const char *TAG = "RAW";
 
 #define RAW_SSID         "LoRa-1"
 #define RAW_PASS         "10941090"
-#define RAW_HOST         "192.168.1.1"
+#define RAW_HOST         "109.248.247.168"
 #define RAW_PORT         9500
 #define RAW_MAGIC        0x31574152u
 #define RAW_CHUNK        64

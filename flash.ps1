@@ -59,7 +59,7 @@ function Ensure-Release {
     Copy-Item $bBin $bin -Force
     Copy-Item $bBoot $boot -Force
     Copy-Item $bPart $part -Force
-    Set-Content (Join-Path $Release "VERSION.txt") "0.4.0-rawwifi" -Encoding Ascii
+    Set-Content (Join-Path $Release "VERSION.txt") "0.4.1-rawwifi" -Encoding Ascii
 }
 
 if ($Build) {
@@ -72,7 +72,7 @@ if ($Build) {
     Copy-Item (Join-Path $BuildDir "vibro_raw_wifi.bin") (Join-Path $Release "vibro_raw_wifi.bin") -Force
     Copy-Item (Join-Path $BuildDir "bootloader\bootloader.bin") (Join-Path $Release "bootloader.bin") -Force
     Copy-Item (Join-Path $BuildDir "partition_table\partition-table.bin") (Join-Path $Release "partition-table.bin") -Force
-    Set-Content (Join-Path $Release "VERSION.txt") "0.4.0-rawwifi" -Encoding Ascii
+    Set-Content (Join-Path $Release "VERSION.txt") "0.4.1-rawwifi" -Encoding Ascii
     Write-Host "OK -> $Release" -ForegroundColor Green
     if (-not $Port) { exit 0 }
 }

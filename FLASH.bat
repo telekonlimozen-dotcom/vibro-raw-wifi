@@ -7,7 +7,7 @@ set "PORT=%~1"
 if not "%PORT%"=="" goto :run
 
 echo.
-echo === vibro-raw-wifi 0.4.0 flash ===
+echo === vibro-raw-wifi 0.4.1 flash ===
 echo.
 echo Available COM ports:
 powershell -NoProfile -ExecutionPolicy Bypass -Command ^
@@ -33,3 +33,4 @@ if not "%ERR%"=="0" (
 )
 pause
 exit /b %ERR%
+
