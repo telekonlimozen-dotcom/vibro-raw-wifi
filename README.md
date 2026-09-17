@@ -6,18 +6,16 @@
 
 ## Прошивка
 
-```bat
-BUILD.bat
-FLASH.bat COMxx
-```
-
-или только flash из готового `release\`:
+Двойной клик по `FLASH.bat` — покажет COM-порты и спросит номер.
+Или сразу:
 
 ```bat
 FLASH.bat COM27
 ```
 
-В логе должны появиться строки `RAW: app_main`, `SPI OK`, `wifi…`, `got IP`.
+Окно не закрывается само (есть `pause`). В логе: `RAW: app_main`, `SPI OK`, `got IP`.
+
+Сборка из исходников: `BUILD.bat`.
 
 ## Приём на ПК
 
