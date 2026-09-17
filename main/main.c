@@ -60,7 +60,9 @@ typedef struct {
 extern SemaphoreHandle_t g_fifo_semaphore;
 
 static EventGroupHandle_t s_wifi_eg;
-static bool s_got_ip;
+static esp_netif_t *s_sta_netif;
+static volatile bool s_got_ip;
+static volatile bool s_wifi_need_reconnect;
 static uint32_t s_seq;
 static int s_sock = -1;
 static struct sockaddr_in s_dest;
@@ -94,21 +96,136 @@ static void lora_power_off(void)
     gpio_set_level(GPIO_LORA_EN, 0);
 }
 
+static const char *wifi_disc_reason_str(uint8_t r)
+{
+    switch (r) {
+    case WIFI_REASON_AUTH_EXPIRE: return "AUTH_EXPIRE";
+    case WIFI_REASON_AUTH_FAIL: return "AUTH_FAIL";
+    case WIFI_REASON_NO_AP_FOUND: return "NO_AP_FOUND";
+    case WIFI_REASON_HANDSHAKE_TIMEOUT: return "HANDSHAKE_TIMEOUT";
+    case WIFI_REASON_CONNECTION_FAIL: return "CONNECTION_FAIL";
+    case WIFI_REASON_ASSOC_FAIL: return "ASSOC_FAIL";
+    case WIFI_REASON_BEACON_TIMEOUT: return "BEACON_TIMEOUT";
+    case WIFI_REASON_4WAY_HANDSHAKE_TIMEOUT: return "4WAY_TIMEOUT";
+    default: return "OTHER";
+    }
+}
+
+static void wifi_scan_dump(void)
+{
+    wifi_scan_config_t sc = {
+        .ssid = NULL,
+        .bssid = NULL,
+        .channel = 0,
+        .show_hidden = true,
+        .scan_type = WIFI_SCAN_TYPE_ACTIVE,
+    };
+    if (esp_wifi_scan_start(&sc, true) != ESP_OK) {
+        boot_say("scan failed");
+        return;
+    }
+    uint16_t n = 0;
+    esp_wifi_scan_get_ap_num(&n);
+    if (n > 24) {
+        n = 24;
+    }
+    wifi_ap_record_t *recs = calloc(n, sizeof(*recs));
+    if (!recs) {
+        return;
+    }
+    uint16_t got = n;
+    if (esp_wifi_scan_get_ap_records(&got, recs) != ESP_OK) {
+        free(recs);
+        return;
+    }
+    bool found = false;
+    esp_rom_printf("RAW: scan %u APs:\n", (unsigned)got);
+    for (uint16_t i = 0; i < got; i++) {
+        esp_rom_printf("  [%u] '%s' rssi=%d ch=%u auth=%u\n",
+                       (unsigned)i, (char *)recs[i].ssid, (int)recs[i].rssi,
+                       (unsigned)recs[i].primary, (unsigned)recs[i].authmode);
+        if (strcmp((char *)recs[i].ssid, RAW_SSID) == 0) {
+            found = true;
+        }
+    }
+    free(recs);
+    boot_say(found ? "LoRa-1 SEEN in scan" : "LoRa-1 NOT in scan (2.4GHz only!)");
+}
+
 static void wifi_on_event(void *arg, esp_event_base_t base, int32_t id, void *data)
 {
     (void)arg;
     if (base == WIFI_EVENT && id == WIFI_EVENT_STA_START) {
-        boot_say("wifi STA_START → connect()");
-        esp_wifi_connect();
+        boot_say("wifi STA_START");
+        esp_wifi_set_ps(WIFI_PS_NONE);
+        s_wifi_need_reconnect = true;
+    } else if (base == WIFI_EVENT && id == WIFI_EVENT_STA_CONNECTED) {
+        boot_say("wifi ASSOC OK → DHCP…");
+        /* Power-save breaks DHCP on some APs (was pm type:1 in logs). */
+        esp_wifi_set_ps(WIFI_PS_NONE);
+        if (s_sta_netif) {
+            esp_netif_dhcpc_stop(s_sta_netif);
+            esp_netif_dhcpc_start(s_sta_netif);
+        }
     } else if (base == WIFI_EVENT && id == WIFI_EVENT_STA_DISCONNECTED) {
+        wifi_event_sta_disconnected_t *e = (wifi_event_sta_disconnected_t *)data;
         s_got_ip = false;
-        /* Never block in event handler — that caused reboot loops. */
-        esp_wifi_connect();
+        if (s_wifi_eg) {
+            xEventGroupClearBits(s_wifi_eg, WIFI_OK_BIT);
+        }
+        esp_rom_printf("RAW: wifi DISC reason=%u (%s)\n",
+                       (unsigned)e->reason, wifi_disc_reason_str(e->reason));
+        /* Do not connect() here — reconnect task does backoff. */
+        s_wifi_need_reconnect = true;
     } else if (base == IP_EVENT && id == IP_EVENT_STA_GOT_IP) {
         ip_event_got_ip_t *e = (ip_event_got_ip_t *)data;
-        esp_rom_printf("RAW: got IP " IPSTR "\n", IP2STR(&e->ip_info.ip));
+        esp_rom_printf("RAW: got IP " IPSTR " gw " IPSTR " -> %s:%u\n",
+                       IP2STR(&e->ip_info.ip), IP2STR(&e->ip_info.gw),
+                       s_host, (unsigned)s_port);
         s_got_ip = true;
+        s_wifi_need_reconnect = false;
         xEventGroupSetBits(s_wifi_eg, WIFI_OK_BIT);
+    }
+}
+
+static void wifi_reconnect_task(void *arg)
+{
+    (void)arg;
+    int attempt = 0;
+    int64_t assoc_since_us = 0;
+    while (true) {
+        wifi_ap_record_t ap = {0};
+        bool assoc = (esp_wifi_sta_get_ap_info(&ap) == ESP_OK);
+
+        if (assoc && !s_got_ip) {
+            if (assoc_since_us == 0) {
+                assoc_since_us = esp_timer_get_time();
+            } else if ((esp_timer_get_time() - assoc_since_us) > 20000000LL) {
+                /* Associated but no DHCP for 20s — force reconnect. */
+                boot_say("DHCP timeout → disconnect/retry");
+                assoc_since_us = 0;
+                esp_wifi_disconnect();
+                s_wifi_need_reconnect = true;
+            }
+        } else if (!assoc) {
+            assoc_since_us = 0;
+        }
+
+        if (!s_got_ip && s_wifi_need_reconnect && !assoc) {
+            s_wifi_need_reconnect = false;
+            attempt++;
+            if ((attempt % 5) == 1) {
+                wifi_scan_dump();
+            }
+            esp_wifi_set_ps(WIFI_PS_NONE);
+            esp_rom_printf("RAW: wifi connect try #%d -> '%s'\n", attempt, RAW_SSID);
+            esp_err_t err = esp_wifi_connect();
+            if (err != ESP_OK) {
+                esp_rom_printf("RAW: connect() %s\n", esp_err_to_name(err));
+                s_wifi_need_reconnect = true;
+            }
+        }
+        vTaskDelay(pdMS_TO_TICKS(2000));
     }
 }
 
@@ -129,10 +246,12 @@ static esp_err_t wifi_start_sta(void)
         ESP_LOGE(TAG, "event_loop %s", esp_err_to_name(err));
         return err;
     }
-    if (!esp_netif_create_default_wifi_sta()) {
+    s_sta_netif = esp_netif_create_default_wifi_sta();
+    if (!s_sta_netif) {
         ESP_LOGE(TAG, "create STA netif failed");
         return ESP_FAIL;
     }
+    esp_netif_set_hostname(s_sta_netif, "vibro-raw");
 
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
     err = esp_wifi_init(&cfg);
@@ -146,9 +265,13 @@ static esp_err_t wifi_start_sta(void)
     wifi_config_t wcfg = {0};
     strncpy((char *)wcfg.sta.ssid, RAW_SSID, sizeof(wcfg.sta.ssid) - 1);
     strncpy((char *)wcfg.sta.password, RAW_PASS, sizeof(wcfg.sta.password) - 1);
-    wcfg.sta.threshold.authmode = WIFI_AUTH_WPA2_PSK;
+    /* Accept WPA/WPA2/WPA3 — do not require WPA2-only threshold. */
+    wcfg.sta.threshold.authmode = WIFI_AUTH_OPEN;
     wcfg.sta.pmf_cfg.capable = true;
     wcfg.sta.pmf_cfg.required = false;
+    wcfg.sta.scan_method = WIFI_ALL_CHANNEL_SCAN;
+    wcfg.sta.sort_method = WIFI_CONNECT_AP_BY_SIGNAL;
+    wcfg.sta.failure_retry_cnt = 3;
 
     esp_wifi_set_mode(WIFI_MODE_STA);
     esp_wifi_set_config(WIFI_IF_STA, &wcfg);
@@ -156,10 +279,13 @@ static esp_err_t wifi_start_sta(void)
     if (err != ESP_OK) {
         return err;
     }
-    /* After start: lower TX power — USB + WiFi brownouts were rebooting the board. */
-    esp_wifi_set_max_tx_power(40); /* ~10 dBm */
-    boot_say("wifi_start OK, waiting IP…");
-    EventBits_t bits = xEventGroupWaitBits(s_wifi_eg, WIFI_OK_BIT, pdFALSE, pdTRUE, pdMS_TO_TICKS(30000));
+    /* Critical: disable modem sleep — DHCP often fails with pm type:1. */
+    esp_wifi_set_max_tx_power(60);
+    esp_wifi_set_ps(WIFI_PS_NONE);
+
+    xTaskCreate(wifi_reconnect_task, "wifi_rc", 4096, NULL, 5, NULL);
+    boot_say("wifi_start OK, waiting IP (DHCP, PS off)…");
+    EventBits_t bits = xEventGroupWaitBits(s_wifi_eg, WIFI_OK_BIT, pdFALSE, pdTRUE, pdMS_TO_TICKS(60000));
     return (bits & WIFI_OK_BIT) ? ESP_OK : ESP_ERR_TIMEOUT;
 }
 

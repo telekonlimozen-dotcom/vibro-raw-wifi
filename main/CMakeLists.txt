@@ -14,4 +14,4 @@ idf_component_register(
         esp_hw_support
 )
 
-target_compile_definitions(${COMPONENT_LIB} PRIVATE "FIRMWARE_VERSION=\"0.4.1-rawwifi\"")
+target_compile_definitions(${COMPONENT_LIB} PRIVATE "FIRMWARE_VERSION=\"0.4.2-rawwifi\"")
