@@ -25,4 +25,4 @@ python ..\ml_vibration\raw_receiver.py --port 9500
 
 ## Версия
 
-`0.4.0-rawwifi`
+`0.4.3-rawwifi`

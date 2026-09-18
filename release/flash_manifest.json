@@ -1,1 +1,1 @@
-{"chip":"esp32c6","version":"0.4.2-rawwifi","baud":460800,"images":[{"offset":"0x0","file":"bootloader.bin"},{"offset":"0x8000","file":"partition-table.bin"},{"offset":"0x10000","file":"vibro_raw_wifi.bin"}],"wifi":{"ssid":"LoRa-1","udp":"109.248.247.168:9500"}}
+{"chip":"esp32c6","version":"0.4.3-rawwifi","baud":460800,"images":[{"offset":"0x0","file":"bootloader.bin"},{"offset":"0x8000","file":"partition-table.bin"},{"offset":"0x10000","file":"vibro_raw_wifi.bin"}],"wifi":{"ssid":"LoRa-1","udp":"109.248.247.168:9500"},"odr_hz":3330}

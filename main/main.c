@@ -39,7 +39,7 @@ static const char *TAG = "RAW";
 #define RAW_PORT         9500
 #define RAW_MAGIC        0x31574152u
 #define RAW_CHUNK        64
-#define RAW_ODR          ACCEL_ODR_1660HZ
+#define RAW_ODR          ACCEL_ODR_3330HZ
 #define RAW_RANGE        ACCEL_RANGE_4G
 #define GPIO_LORA_EN     GPIO_NUM_9
 
